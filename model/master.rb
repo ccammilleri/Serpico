@@ -54,6 +54,9 @@ class Findings
     property :references, String, :length => 20000, :required => false
     property :risk, Integer, :required => false
     property :affected_hosts, String, :length => 1000000, :required => false
+    property :presentation_points, String, :length => 100000, :required => false
+    property :presentation_rem_points, String, :length => 100000, :required => false
+
 end
 
 class TemplateReports
@@ -122,12 +125,6 @@ class Sessions
 
     def self.is_valid?(session_key)
         sessions = Sessions.first(:session_key => session_key)
-        if sessions
-            puts "DEBUG: Valid session for #{sessions.username}"
-        else
-            puts "DEBUG: Invalid session"
-        end
-
         return true if sessions
     end
 

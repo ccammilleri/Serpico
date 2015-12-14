@@ -1,6 +1,9 @@
 # Serpico
 ## SimplE RePort wrIting and CollaboratiOn tool
-Serpico is a penetration testing report generation and collaboration tool. It was developed to cut down on the amount of time it takes to write a penetration testing report. 
+Serpico is a penetration testing report generation and collaboration tool. It was developed to cut down on the amount of time it takes to write a penetration testing report.
+
+Video Demo of Functionality:
+[Serpico - Demo 1](https://www.youtube.com/watch?v=G_qYcL4ynSc)
 
 ## Installation
 Serpico is written in Ruby using Sinatra, Bootstrap, and Haml. Installation should be easy:
@@ -14,7 +17,7 @@ rvm use 2.1.5
 
 - If you are running Ubuntu (or also verified on Kali) you will need a couple of dependencies:
 ```
-apt-get install libsqlite3-dev libxslt-dev libxml2-dev
+apt-get install libsqlite3-dev libxslt-dev libxml2-dev zlib1g-dev gcc
 ```
 
 - Go into Serpico and install the proper gems:

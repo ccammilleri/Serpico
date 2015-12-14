@@ -21,8 +21,9 @@ config_options = JSON.parse(File.read('./config.json'))
 ## SSL Settings
 set :ssl_certificate, config_options["ssl_certificate"]
 set :ssl_key, config_options["ssl_key"]
+set :use_ssl, config_options["use_ssl"]
 set :port, config_options["port"]
-set :bind, "0.0.0.0"
+set :bind_address, config_options["bind_address"]
 
 ## Global variables
 set :finding_types, config_options["finding_types"]
@@ -41,7 +42,7 @@ set :domain, config_options["ldap_domain"]
 set :dc, config_options["ldap_dc"]
 
 enable :sessions
-
+set :session_secret, rand(36**12).to_s(36)
 ### Basic Routes
 
 # Used for 404 responses
@@ -49,7 +50,7 @@ not_found do
     "Sorry, I don't know this page."
 end
 
-# Removing
+# Error catches
 error do
     if settings.show_exceptions
         "Error!"+ env['sinatra.error'].name
@@ -58,15 +59,34 @@ error do
     end
 end
 
-# Default Page
+# Run a session check on every route
+["/info","/reports/*","/report/*","/","/logout","/admin/*","/master/*","/mapping/*"].each do |path|
+    before path do
+        next if request.path_info == "/reports/list"
+        redirect '/reports/list' unless valid_session?
+    end
+end
+
+before "/master/*" do
+    redirect to("/no_access") if not is_administrator?
+end
+
+before "/mapping/*" do
+    redirect to("/no_access") if not is_administrator?
+end
+#######
+
+
 get '/' do
+    redirect to("/reports/list")
+end
+
+get '/login' do
     redirect to("/reports/list")
 end
 
 # Handles the consultant information settings
 get '/info' do
-    redirect to("/") unless valid_session?
-
     @user = User.first(:username => get_username)
 
     if !@user
@@ -82,8 +102,6 @@ end
 
 # Save the consultant information into the database
 post '/info' do
-    redirect to("/") unless valid_session?
-
     user = User.first(:username => get_username)
 
     if !user
@@ -102,10 +120,6 @@ post '/info' do
     redirect to("/info")
 end
 
-get '/login' do
-    redirect to("/reports/list")
-end
-
 post '/login' do
     user = User.first(:username => params[:username])
 
@@ -122,7 +136,7 @@ post '/login' do
             @curr_session.save
 
         end
-    else
+    elsif user
 		if options.ldap
 			#try AD authentication
 			usern = params[:username]
@@ -149,12 +163,12 @@ end
 
 ## We use a persistent session table, one session per user; no end date
 get '/logout' do
-  if session[:session_id]
-    sess = Sessions.first(:session_key => session[:session_id])
-    if sess
-      sess.destroy
+    if session[:session_id]
+        sess = Sessions.first(:session_key => session[:session_id])
+        if sess
+            sess.destroy
+        end
     end
-  end
 
     redirect to("/")
 end
@@ -185,7 +199,7 @@ end
 
 # serve a copy of the code
 get '/admin/pull' do
-   redirect to("/no_access") if not is_administrator?
+    redirect to("/no_access") if not is_administrator?
 
 	if File.exists?("./export.zip")
 		send_file "./export.zip", :filename => "export.zip", :type => 'Application/octet-stream'
@@ -246,12 +260,11 @@ get '/admin/delete/:id' do
 end
 
 get '/admin/add_user/:id' do
-
     if not is_administrator?
-      id = params[:id]
-      unless get_report(id)
-        redirect to("/no_access")
-      end
+        id = params[:id]
+        unless get_report(id)
+            redirect to("/no_access")
+        end
     end
 
     @users = User.all(:order => [:username.asc])
@@ -265,12 +278,11 @@ get '/admin/add_user/:id' do
 end
 
 post '/admin/add_user/:id' do
-
     if not is_administrator?
-      id = params[:id]
-      unless get_report(id)
-        redirect to("/no_access")
-      end
+        id = params[:id]
+        unless get_report(id)
+            redirect to("/no_access")
+        end
     end
 
     report = Reports.first(:id => params[:id])
@@ -294,14 +306,12 @@ post '/admin/add_user/:id' do
 end
 
 get '/admin/del_user_report/:id/:author' do
-
     if not is_administrator?
-      id = params[:id]
-      unless get_report(id)
-        redirect to("/no_access")
-      end
+        id = params[:id]
+        unless get_report(id)
+            redirect to("/no_access")
+        end
     end
-
 
     report = Reports.first(:id => params[:id])
 
@@ -329,21 +339,7 @@ end
 
 # List Available Templated Findings
 get '/master/findings' do
-    redirect to("/no_access") if not is_administrator?
-
     @findings = TemplateFindings.all(:order => [:title.asc])
-    @master = true
-    @dread = config_options["dread"]
-
-    haml :findings_list, :encode_html => true
-end
-
-# Show only certain findings
-#	This isn't implemented, should probably remove it =/
-get '/master/findings/f/:type' do
-    redirect to("/no_access") if not is_administrator?
-
-    @findings = TemplateFindings.all(:type => params[:type], :order => [:title.asc])
     @master = true
     @dread = config_options["dread"]
 
@@ -352,8 +348,6 @@ end
 
 # Create a new templated finding
 get '/master/findings/new' do
-    redirect to("/no_access") if not is_administrator?
-
     @master = true
     @dread = config_options["dread"]
     @nessusmap = config_options["nessusmap"]
@@ -363,8 +357,6 @@ end
 
 # Create the finding in the DB
 post '/master/findings/new' do
-    redirect to("/no_access") if not is_administrator?
-
     data = url_escape_hash(request.POST)
 
     if(config_options["dread"])
@@ -395,8 +387,6 @@ end
 
 # Edit the templated finding
 get '/master/findings/:id/edit' do
-    redirect to("/no_access") if not is_administrator?
-
     @master = true
     @dread = config_options["dread"]
     @nessusmap = config_options["nessusmap"]
@@ -426,8 +416,6 @@ end
 
 # Edit a finding
 post '/master/findings/:id/edit' do
-    redirect to("/no_access") if not is_administrator?
-
     # Check for kosher name in report name
     id = params[:id]
 
@@ -482,8 +470,6 @@ end
 
 # Delete a mapping from finding
 get '/mapping/:id/nessus/:mappingid/delete' do
-    redirect to("/no_access") if not is_administrator?
-
     # Check for kosher name in report name
     id = params[:id]
 
@@ -497,8 +483,6 @@ end
 
 # Delete a mapping from finding
 get '/mapping/:id/burp/:mappingid/delete' do
-    redirect to("/no_access") if not is_administrator?
-
     # Check for kosher name in report name
     id = params[:id]
 
@@ -512,8 +496,6 @@ end
 
 # Delete a template finding
 get '/master/findings/:id/delete' do
-    redirect to("/no_access") if not is_administrator?
-
     # Check for kosher name in report name
     id = params[:id]
 
@@ -532,8 +514,6 @@ end
 
 # preview a finding
 get '/master/findings/:id/preview' do
-    redirect to("/no_access") if not is_administrator?
-
     # Check for kosher name in report name
     id = params[:id]
 
@@ -589,8 +569,6 @@ end
 
 # Export a findings database
 get '/master/export' do
-    redirect to("/no_access") if not is_administrator?
-
 	json = ""
 
 	findings = TemplateFindings.all
@@ -603,15 +581,11 @@ end
 
 # Import a findings database
 get '/master/import' do
-    redirect to("/no_access") if not is_administrator?
-
 	haml :import_templates
 end
 
 # Import a findings database
 post '/master/import' do
-    redirect to("/no_access") if not is_administrator?
-
 	# reject if the file is above a certain limit
 	if params[:file][:tempfile].size > 1000000
 		return "File too large. 1MB limit"
@@ -770,7 +744,7 @@ post '/admin/templates/edit' do
 
     # reject if the file is above a certain limit
     if params[:file][:tempfile].size > 100000000
-      return "File too large. 10MB limit"
+        return "File too large. 10MB limit"
     end
 
     docx = "./templates/#{rand(36**36).to_s(36)}.docx"
@@ -833,16 +807,12 @@ end
 
 # Create a report
 get '/report/new' do
-    redirect to("/") unless valid_session?
-
     @templates = Xslt.all
     haml :new_report, :encode_html => true
 end
 
 # Create a report
 post '/report/new' do
-    redirect to("/") unless valid_session?
-
     data = url_escape_hash(request.POST)
 
     data["owner"] = get_username
@@ -851,13 +821,11 @@ post '/report/new' do
     @report = Reports.new(data)
     @report.save
 
-   redirect to("/report/#{@report.id}/edit")
+    redirect to("/report/#{@report.id}/edit")
 end
 
 # List attachments
 get '/report/:id/attachments' do
-	redirect to("/") unless valid_session?
-
     id = params[:id]
 
     # Query for the first report matching the id
@@ -873,8 +841,6 @@ end
 
 # upload nessus xml files to be processed
 get '/report/:id/import_nessus' do
-    redirect to("/") unless valid_session?
-
     id = params[:id]
 
     @nessusmap = config_options["nessusmap"]
@@ -887,8 +853,6 @@ end
 
 # auto add serpico findings if mapped to nessus ids
 post '/report/:id/import_autoadd' do
-    redirect to("/") unless valid_session?
-
     type = params[:type]
 
     xml = params[:file][:tempfile].read
@@ -992,8 +956,6 @@ end
 
 # upload burp xml files to be processed
 get '/report/:id/import_burp' do
-    redirect to("/") unless valid_session?
-
     id = params[:id]
 
     @burpmap = config_options["burpmap"]
@@ -1006,8 +968,6 @@ end
 
 # Upload attachment menu
 get '/report/:id/upload_attachments' do
-	redirect to("/") unless valid_session?
-
     id = params[:id]
     @no_file = params[:no_file]
 
@@ -1024,8 +984,6 @@ get '/report/:id/upload_attachments' do
 end
 
 post '/report/:id/upload_attachments' do
-	redirect to("/") unless valid_session?
-
     id = params[:id]
 
     # Query for the first report matching the id
@@ -1066,8 +1024,6 @@ end
 
 # display attachment
 get '/report/:id/attachments/:att_id' do
-	redirect to("/") unless valid_session?
-
     id = params[:id]
 
     # Query for the first report matching the id
@@ -1083,8 +1039,6 @@ end
 
 #Delete an attachment
 get '/report/:id/attachments/delete/:att_id' do
-	redirect to("/") unless valid_session?
-
     id = params[:id]
 
     # Query for the first report matching the id
@@ -1111,8 +1065,6 @@ end
 
 #Delete a report
 get '/report/:id/remove' do
-    redirect to("/") unless valid_session?
-
     id = params[:id]
 
     # Query for the first report matching the id
@@ -1134,8 +1086,6 @@ end
 
 # Edit the Report's main information; Name, Consultant, etc.
 get '/report/:id/edit' do
-    redirect to("/") unless valid_session?
-
     id = params[:id]
 
     # Query for the first report matching the report_name
@@ -1151,8 +1101,6 @@ end
 
 # Edit the Report's main information; Name, Consultant, etc.
 get '/report/:id/additional_features' do
-    redirect to("/") unless valid_session?
-
     id = params[:id]
 
     # Query for the first report matching the report_name
@@ -1168,8 +1116,6 @@ end
 
 # Edit a report
 post '/report/:id/edit' do
-    redirect to("/") unless valid_session?
-
     id = params[:id]
 
     data = url_escape_hash(request.POST)
@@ -1180,25 +1126,26 @@ post '/report/:id/edit' do
     redirect to("/report/#{id}/edit")
 end
 
-# TODO: The way that UDV's handle HTML input does not fit with the rest
-#		of serpico. This needs to be rewritten.
-
 #Edit user defined variables
 get '/report/:id/user_defined_variables' do
-    redirect to("/") unless valid_session?
-
     id = params[:id]
     @report = get_report(id)
 
     if  @report.user_defined_variables
         @user_variables = JSON.parse(@report.user_defined_variables)
+
+        # add in the global UDV from config
+        if config_options["user_defined_variables"].size > 0 and !@user_variables.include?(config_options["user_defined_variables"][0])
+            @user_variables = @user_variables + config_options["user_defined_variables"]
+        end
+
         @user_variables.each do |k,v|
 			if v
 				@user_variables[k] = meta_markup(v)
 			end
         end
     else
-        @user_variables = ""
+        @user_variables = config_options["user_defined_variables"]
     end
 
     haml :user_defined_variable, :encode_html => true
@@ -1206,8 +1153,6 @@ end
 
 #Post user defined variables
 post '/report/:id/user_defined_variables' do
-    redirect to("/") unless valid_session?
-
     data = url_escape_hash(request.POST)
 
 	variable_hash = Hash.new()
@@ -1258,9 +1203,9 @@ post '/report/:id/user_defined_variables' do
 
 end
 
-# Edit the Report's Current Findings
+# Findings List Menu
 get '/report/:id/findings' do
-    redirect to("/") unless valid_session?
+    @chart = config_options["chart"]
 
     @report = true
     id = params[:id]
@@ -1286,8 +1231,6 @@ end
 
 # Generate a status report from the current findings
 get '/report/:id/status' do
-    redirect to("/") unless valid_session?
-
     id = params[:id]
 
     # Query for the report
@@ -1406,8 +1349,6 @@ end
 
 # Add a finding to the report
 get '/report/:id/findings_add' do
-    redirect to("/") unless valid_session?
-
     # Check for kosher name in report name
     id = params[:id]
 
@@ -1426,8 +1367,6 @@ end
 
 # Add a finding to the report
 post '/report/:id/findings_add' do
-    redirect to("/") unless valid_session?
-
     # Check for kosher name in report name
     id = params[:id]
 
@@ -1486,8 +1425,6 @@ end
 
 # Create a new finding in the report
 get '/report/:id/findings/new' do
-    redirect to("/") unless valid_session?
-
     @dread = config_options["dread"]
 
     haml :create_finding, :encode_html => true
@@ -1495,8 +1432,6 @@ end
 
 # Create the finding in the DB
 post '/report/:id/findings/new' do
-    redirect to("/") unless valid_session?
-
     data = url_escape_hash(request.POST)
 
     if(config_options["dread"])
@@ -1524,8 +1459,6 @@ end
 
 # Edit the finding in a report
 get '/report/:id/findings/:finding_id/edit' do
-    redirect to("/") unless valid_session?
-
     id = params[:id]
 
     # Query for the first report matching the report_name
@@ -1551,8 +1484,6 @@ end
 
 # Edit a finding in the report
 post '/report/:id/findings/:finding_id/edit' do
-    redirect to("/") unless valid_session?
-
     # Check for kosher name in report name
     id = params[:id]
 
@@ -1585,8 +1516,6 @@ end
 
 # Upload a finding from a report into the database
 get '/report/:id/findings/:finding_id/upload' do
-    redirect to("/") unless valid_session?
-
     # Check for kosher name in report name
     id = params[:id]
 
@@ -1634,8 +1563,6 @@ end
 
 # Remove a finding from the report
 get '/report/:id/findings/:finding_id/remove' do
-    redirect to("/") unless valid_session?
-
     # Check for kosher name in report name
     id = params[:id]
 
@@ -1663,8 +1590,6 @@ end
 
 # preview a finding
 get '/report/:id/findings/:finding_id/preview' do
-    redirect to("/") unless valid_session?
-
     id = params[:id]
 
     # Query for the report
@@ -1683,8 +1608,8 @@ get '/report/:id/findings/:finding_id/preview' do
 
     # this flags edited findings
     if @finding.master_id
-            master = TemplateFindings.first(:id => @finding.master_id)
-            @finding.overview = compare_text(@finding.overview, master.overview)
+        master = TemplateFindings.first(:id => @finding.master_id)
+        @finding.overview = compare_text(@finding.overview, master.overview)
     end
 
     ## We have to do some hackery here for wordml
@@ -1784,8 +1709,6 @@ end
 
 # Generate the report
 get '/report/:id/generate' do
-    redirect to("/") unless valid_session?
-
     id = params[:id]
 
     # Query for the report
@@ -1942,8 +1865,6 @@ end
 
 # Export a report
 get '/report/:id/export' do
-    redirect to("/") unless valid_session?
-
 	json = {}
 
     id = params[:id]
@@ -1967,15 +1888,11 @@ end
 
 # Import a report
 get '/report/import' do
-    redirect to("/") unless valid_session?
-
 	haml :import_report
 end
 
 # Import a report
 post '/report/import' do
-    redirect to("/") unless valid_session?
-
 	# reject if the file is above a certain limit
 	if params[:file][:tempfile].size > 1000000
 		return "File too large. 1MB limit"
@@ -2004,8 +1921,6 @@ post '/report/import' do
 end
 
 get '/report/:id/text_status' do
-    redirect to("/") unless valid_session?
-
     id = params[:id]
 	@report = get_report(id)
 
@@ -2020,8 +1935,6 @@ end
 
 # generate an asciidoc version of current findings
 get '/report/:id/asciidoc_status' do
-    redirect to("/") unless valid_session?
-
     id = params[:id]
 	report = get_report(id)
 
@@ -2042,17 +1955,39 @@ get '/report/:id/asciidoc_status' do
 	send_file local_filename, :type => 'txt', :filename => "report_#{id}_findings.asd"
 end
 
+# generate a presentation of current report
+get '/report/:id/presentation' do
+    # check the user has installed reveal
+    if !(File.directory?(Dir.pwd+"/public/reveal.js"))
+        return "reveal.js not found in /public/ directory. To install:<br><br> 1. Goto [INSTALL_DIR]/public/ <br>2.run 'git clone https://github.com/hakimel/reveal.js.git'<br>3. Restart Serpico"
+    end
+
+    id = params[:id]
+
+    @report = get_report(id)
+
+    # bail without a report
+    redirect to("/") unless @report
+
+    # add the findings
+    @findings = Findings.all(:report_id => id)
+
+    @dread = config_options["dread"]
+
+    haml :presentation, :encode_html => true, :layout => false
+end
+
 
 # Helper Functions
 
 # Return if the user has a valid session or not
 def valid_session?
-  return Sessions.is_valid?(session[:session_id])
+    return Sessions.is_valid?(session[:session_id])
 end
 
 # Get the current users type
 def user_type
-  return Sessions.type(session[:session_id])
+    return Sessions.type(session[:session_id])
 end
 
 # Get the current users, username
@@ -2062,7 +1997,7 @@ end
 
 # Check if the user is an administrator
 def is_administrator?
-  return true if Sessions.type(session[:session_id]) == "Administrator"
+    return true if Sessions.type(session[:session_id]) == "Administrator"
 end
 
 # Grab a specific report
@@ -2075,7 +2010,7 @@ def get_report(id)
             authors = report.authors
             return report if report.owner == get_username
             if authors
-              return report if authors.include?(get_username)
+                return report if authors.include?(get_username)
             end
         end
     end
