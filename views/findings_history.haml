@@ -18,19 +18,11 @@
     .diff li.diff-block-info { background: none repeat scroll 0 0 gray; }
   - if @currentfinding and @previousfinding
     .well.well-small 
-<<<<<<< HEAD
       Comapring 
       %a{:href => "/stale/findings/#{@previousfinding.id}"} previous finding
       edited by #{@previousfinding.last_updated_by} at #{@previousfinding.updated_at.strftime("%H:%M %m/%d/%Y")} with 
       %a{:href => "/master/findings/#{@currentfinding.id}/edit"} current finding
       last edited by #{@currentfinding.last_updated_by} at #{@currentfinding.updated_at.strftime("%H:%M %m/%d/%Y")}
-=======
-      Comapring  
-      %a{:href => "/master/findings/#{@currentfinding.id}/edit"} current finding
-      last edited by #{@currentfinding.last_updated_by} at #{@currentfinding.updated_at.strftime("%H:%M %m/%d/%Y")} with 
-      %a{:href => "/stale/findings/#{@previousfinding.id}"} previous finding
-      edited by #{@previousfinding.last_updated_by} at #{@previousfinding.updated_at.strftime("%H:%M %m/%d/%Y")}
->>>>>>> 15e13bea607776756ad038955119bd980d581cca
     %dl
       %dt 
         Title:
