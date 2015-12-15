@@ -16,6 +16,7 @@
       .control-group
         %label{ :class => "control-label", :for => "damage" } Damage
         .controls
+<<<<<<< HEAD
           %input{ :type => 'number', :min => '1', :max => '10', :name => 'damage', :value => "#{@revisedfinding.damage}", :required => true, :disabled => "disabled"}
       .control-group
         %label{ :class => "control-label", :for => "reproducability" } Reproducibility
@@ -33,6 +34,25 @@
         %label{ :class => "control-label", :for => "discoverability" } Discoverability
         .controls
           %input{ :type => 'number', :min => '1', :max => '10', :name => 'discoverability', :value => "#{@revisedfinding.discoverability}", :required => true, :disabled => "disabled"}
+=======
+          %input{ :type => 'number', :min => '1', :max => '10', :name => 'damage', :value => "#{@revisedfinding.damage}", :required => true}
+      .control-group
+        %label{ :class => "control-label", :for => "reproducability" } Reproducibility
+        .controls
+          %input{ :type => 'number', :min => '1', :max => '10', :name => 'reproducability', :value => "#{@revisedfinding.reproducability}", :required => true}
+      .control-group
+        %label{ :class => "control-label", :for => "exploitability" } Exploitability
+        .controls
+          %input{ :type => 'number', :min => '1', :max => '10', :name => 'exploitability', :value => "#{@revisedfinding.exploitability}", :required => true}
+      .control-group
+        %label{ :class => "control-label", :for => "affected_users" } Affected Users
+        .controls
+          %input{ :type => 'number', :min => '1', :max => '10', :name => 'affected_users', :value => "#{@revisedfinding.affected_users}", :required => true}
+      .control-group
+        %label{ :class => "control-label", :for => "discoverability" } Discoverability
+        .controls
+          %input{ :type => 'number', :min => '1', :max => '10', :name => 'discoverability', :value => "#{@revisedfinding.discoverability}", :required => true}
+>>>>>>> 15e13bea607776756ad038955119bd980d581cca
     - else
       .control-group
         %label{ :class => "control-label", :for => "risk" } Vulnerability Risk Level
