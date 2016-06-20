@@ -28,10 +28,26 @@ set :bind_address, config_options["bind_address"]
 
 ## Global variables
 set :finding_types, config_options["finding_types"]
-set :effort, ["LOW","MEDIUM","HARD"]
+set :effort, ["Quick","Planned","Involved"]
 set :assessment_types, ["External", "Internal", "Internal/External", "Wireless", "Web Application", "DoS"]
 set :status, ["EXPLOITED"]
 set :show_exceptions, false
+
+# CVSS
+set :av, ["Local","Local Network","Network"]
+set :ac, ["High","Medium","Low"]
+set :au, ["Multiple","Single","None"]
+set :c, ["None","Partial","Complete"]
+set :i, ["None","Partial","Complete"]
+set :a, ["None","Partial","Complete"]
+set :e, ["Not Defined","Unproven Exploit Exists","Proof-of-Concept Code","Functional Exploit Exists","High"]
+set :rl, ["Not Defined","Official Fix","Temporary Fix","Workaround","Unavailable"]
+set :rc, ["Not Defined","Unconfirmed","Uncorroborated","Confirmed"]
+set :cdp, ["Not Defined","None","Low","Low-Medium","Medium-High","High"]
+set :td, ["Not Defined","None","Low","Medium","High"]
+set :cr, ["Not Defined","Low","Medium","High"]
+set :ir, ["Not Defined","Low","Medium","High"]
+set :ar, ["Not Defined","Low","Medium","High"]
 
 ## LDAP Settings
 if config_options["ldap"].downcase == "true"
@@ -44,6 +60,7 @@ set :dc, config_options["ldap_dc"]
 
 enable :sessions
 set :session_secret, rand(36**12).to_s(36)
+
 ### Basic Routes
 
 # Used for 404 responses
@@ -116,6 +133,7 @@ post '/info' do
     user.consultant_phone = params[:phone]
     user.consultant_title = params[:title]
     user.consultant_name = params[:name]
+    user.consultant_company = params[:company]
     user.save
 
     redirect to("/info")
@@ -207,6 +225,21 @@ get '/admin/pull' do
 	else
 		"No copy of the code available. Run scripts/make_export.sh."
 	end
+end
+
+#create DB backup
+get '/admin/dbbackup' do
+	redirect to("/no_access") if not is_administrator?
+  bdate  = Time.now()
+  filename = "master" + "-" + (bdate.strftime("%Y%m%d%H%M%S") +".bak")
+	FileUtils::copy_file("./db/master.db", "./tmp/#{filename}")
+  	if not File.zero?("./tmp/#{filename}")
+    		send_file "./tmp/#{filename}", :filename => "#{filename}", :type => 'Application/octet-stream'
+  	else
+    		"No copy of the database is available. Please try again."
+    		sleep(5)
+    		redirect to("/admin/")
+  	end
 end
 
 # Create a new user
@@ -343,6 +376,7 @@ get '/master/findings' do
     @findings = TemplateFindings.all(:order => [:title.asc])
     @master = true
     @dread = config_options["dread"]
+    @cvss = config_options["cvss"]
 
     haml :findings_list, :encode_html => true
 end
@@ -351,6 +385,7 @@ end
 get '/master/findings/new' do
     @master = true
     @dread = config_options["dread"]
+    @cvss = config_options["cvss"]
     @nessusmap = config_options["nessusmap"]
 
     haml :create_finding, :encode_html => true
@@ -384,6 +419,8 @@ post '/master/findings/new' do
 
         @nessus = NessusMapping.new(nessusdata)
         @nessus.save
+    elsif(config_options["cvss"])
+        data = cvss(data)
     end
 
     redirect to('/master/findings')
@@ -393,6 +430,7 @@ end
 get '/master/findings/:id/edit' do
     @master = true
     @dread = config_options["dread"]
+    @cvss = config_options["cvss"]
     @nessusmap = config_options["nessusmap"]
     @burpmap = config_options["burpmap"]
 
@@ -450,6 +488,8 @@ post '/master/findings/:id/edit' do
 
     if(config_options["dread"])
         data["dread_total"] = data["damage"].to_i + data["reproducability"].to_i + data["exploitability"].to_i + data["affected_users"].to_i + data["discoverability"].to_i
+    elsif(config_options["cvss"])
+        data = cvss(data)
     end
 
     # update metadata 
@@ -660,6 +700,8 @@ end
 
 # Import a findings database
 post '/master/import' do
+    redirect to("/master/import") unless params[:file]
+
 	# reject if the file is above a certain limit
 	if params[:file][:tempfile].size > 1000000
 		return "File too large. 1MB limit"
@@ -747,6 +789,8 @@ post '/admin/templates/add' do
 
 	xslt_file = "./templates/#{rand(36**36).to_s(36)}.xslt"
 
+    redirect to("/admin/templates/add") unless params[:file]
+
 	# reject if the file is above a certain limit
 	if params[:file][:tempfile].size > 100000000
 		return "File too large. 10MB limit"
@@ -815,6 +859,8 @@ post '/admin/templates/edit' do
     template = Xslt.first(:id => params[:id])
 
     xslt_file = template.xslt_location
+
+    redirect to("/admin/templates/#{params[:id]}/edit") unless params[:file]
 
     # reject if the file is above a certain limit
     if params[:file][:tempfile].size > 100000000
@@ -932,7 +978,7 @@ post '/report/:id/import_autoadd' do
     xml = params[:file][:tempfile].read
     if (xml =~ /^<NessusClientData_v2>/ && type == "nessus")
         import_nessus = true
-        vulns = parse_nessus_xml(xml)
+        vulns = parse_nessus_xml(xml, config_options["threshold"])
     elsif (xml =~ /^<issues burpVersion/ && type == "burp")
         import_burp = true
         vulns = parse_burp_xml(xml)
@@ -1295,11 +1341,14 @@ get '/report/:id/findings' do
     # Query for the findings that match the report_id
     if(config_options["dread"])
         @findings = Findings.all(:report_id => id, :order => [:dread_total.desc])
+    elsif(config_options["cvss"])
+        @findings = Findings.all(:report_id => id, :order => [:cvss_total.desc])
     else
         @findings = Findings.all(:report_id => id, :order => [:risk.desc])
     end
 
     @dread = config_options["dread"]
+    @cvss = config_options["cvss"]
 
     haml :findings_list, :encode_html => true
 end
@@ -1318,6 +1367,8 @@ get '/report/:id/status' do
     # Query for the findings that match the report_id
     if(config_options["dread"])
         @findings = Findings.all(:report_id => id, :order => [:dread_total.desc])
+    elsif(config_options["cvss"])
+        @findings = Findings.all(:report_id => id, :order => [:cvss_total.desc])
     else
         @findings = Findings.all(:report_id => id, :order => [:risk.desc])
     end
@@ -1465,6 +1516,13 @@ post '/report/:id/findings_add' do
 		attr["master_id"] = finding.to_i
 		@newfinding = Findings.new(attr)
 		@newfinding.report_id = id
+
+        # because of multiple scores we need to make sure all are set
+        # => leave it up to the user to make the calculation if they switch mid report
+        @newfinding.dread_total = 0 if @newfinding.dread_total == nil
+        @newfinding.cvss_total = 0  if @newfinding.cvss_total == nil
+        @newfinding.risk = 0 if @newfinding.risk == nil
+
 		@newfinding.save
 	end
 
@@ -1489,11 +1547,14 @@ post '/report/:id/findings_add' do
 
     if(config_options["dread"])
         @findings = Findings.all(:report_id => id, :order => [:dread_total.desc])
+    elsif(config_options["cvss"])
+        @findings = Findings.all(:report_id => id, :order => [:cvss_total.desc])
     else
         @findings = Findings.all(:report_id => id, :order => [:risk.desc])
     end
 
     @dread = config_options["dread"]
+    @cvss = config_options["cvss"]
 
     haml :findings_list, :encode_html => true
 end
@@ -1501,6 +1562,7 @@ end
 # Create a new finding in the report
 get '/report/:id/findings/new' do
     @dread = config_options["dread"]
+    @cvss = config_options["cvss"]
 
     haml :create_finding, :encode_html => true
 end
@@ -1511,6 +1573,8 @@ post '/report/:id/findings/new' do
 
     if(config_options["dread"])
         data["dread_total"] = data["damage"].to_i + data["reproducability"].to_i + data["exploitability"].to_i + data["affected_users"].to_i + data["discoverability"].to_i
+    elsif(config_options["cvss"])
+        data = cvss(data)
     end
 
     id = params[:id]
@@ -1527,8 +1591,14 @@ post '/report/:id/findings/new' do
     @finding = Findings.new(data)
     @finding.save
 
-    # for a parameter_pollution on report_id
+    # because of multiple scores we need to make sure all are set
+    # => leave it up to the user to make the calculation if they switch mid report
+    @finding.dread_total = 0 if @finding.dread_total == nil
+    @finding.cvss_total = 0 if @finding.cvss_total == nil
+    @finding.risk = 0 if @finding.risk == nil
+    @finding.save
 
+    # for a parameter_pollution on report_id
     redirect to("/report/#{id}/findings")
 end
 
@@ -1553,6 +1623,7 @@ get '/report/:id/findings/:finding_id/edit' do
     end
 
     @dread = config_options["dread"]
+    @cvss = config_options["cvss"]
 
     haml :findings_edit, :encode_html => true
 end
@@ -1582,6 +1653,8 @@ post '/report/:id/findings/:finding_id/edit' do
 
     if(config_options["dread"])
         data["dread_total"] = data["damage"].to_i + data["reproducability"].to_i + data["exploitability"].to_i + data["affected_users"].to_i + data["discoverability"].to_i
+    elsif(config_options["cvss"])
+        data = cvss(data)
     end
 
     # update metadata 
@@ -1589,6 +1662,13 @@ post '/report/:id/findings/:finding_id/edit' do
 
     # Update the finding with templated finding stuff
     @finding.update(data)
+
+    # because of multiple scores we need to make sure all are set
+    # => leave it up to the user to make the calculation if they switch mid report
+    @finding.dread_total = 0 if @finding.dread_total == nil
+    @finding.cvss_total = 0 if @finding.cvss_total == nil
+    @finding.risk = 0 if @finding.risk == nil
+    @finding.save
 
     redirect to("/report/#{id}/findings")
 end
@@ -1625,6 +1705,13 @@ get '/report/:id/findings/:finding_id/upload' do
                     :affected_users => @finding.affected_users,
                     :discoverability => @finding.discoverability,
                     :dread_total => @finding.dread_total,
+                    :cvss_base => @finding.cvss_base,
+                    :cvss_impact => @finding.cvss_impact,
+                    :cvss_exploitability => @finding.cvss_exploitability,
+                    :cvss_temporal => @finding.cvss_temporal,
+                    :cvss_environmental => @finding.cvss_environmental,
+                    :cvss_modified_impact => @finding.cvss_modified_impact,
+                    :cvss_total => @finding.cvss_total,
                     :effort => @finding.effort,
                     :type => @finding.type,
                     :overview => @finding.overview,
@@ -1808,17 +1895,23 @@ get '/report/:id/generate' do
         @report.consultant_phone = user.consultant_phone
         @report.consultant_email = user.consultant_email
         @report.consultant_title = user.consultant_title
+        @report.consultant_company = user.consultant_company
+
     else
         @report.consultant_name = ""
         @report.consultant_phone = ""
         @report.consultant_email = ""
         @report.consultant_title = ""
+        @report.consultant_company = ""
+
     end
     @report.save
 
     # Query for the findings that match the report_id
     if(config_options["dread"])
         @findings = Findings.all(:report_id => id, :order => [:dread_total.desc])
+    elsif(config_options["cvss"])
+        @findings = Findings.all(:report_id => id, :order => [:cvss_total.desc])
     else
         @findings = Findings.all(:report_id => id, :order => [:risk.desc])
     end
@@ -1976,6 +2069,8 @@ end
 
 # Import a report
 post '/report/import' do
+    redirect to("/report/import") unless params[:file]
+
 	# reject if the file is above a certain limit
 	if params[:file][:tempfile].size > 1000000
 		return "File too large. 1MB limit"
@@ -1995,6 +2090,11 @@ post '/report/import' do
 		finding["master_id"] = nil
 		finding["report_id"] = f.id
 		finding["finding_modified"] = nil
+
+        finding["dread_total"] = 0 if finding["dread_total"] == nil
+        finding["cvss_total"] = 0 if finding["cvss_total"] == nil
+        finding["risk"] = 1 if finding["risk"] == nil
+
 		g = Findings.create(finding)
 		g.save
 	end
@@ -2056,9 +2156,75 @@ get '/report/:id/presentation' do
     @findings = Findings.all(:report_id => id)
 
     @dread = config_options["dread"]
+    @cvss = config_options["cvss"]
 
     haml :presentation, :encode_html => true, :layout => false
 end
+
+##### Simple API Components - Read-Only for now
+
+# returns an API session key
+post '/v1/session' do
+    return auth(params[:username],params[:password])
+end
+
+# returns all reports available to the user, requires Session Key
+post '/v1/reports' do
+    return "Please provide the API session" unless params[:session]
+    return "Session is not valid \n" unless Sessions.is_valid?(params[:session])
+
+    # use implicit session methods
+    session[:session_id] = params[:session]
+
+    if params[:report_id]
+        reports = [get_report(params[:report_id])]
+    else
+        reports = Reports.all()
+    end
+
+    return "{}" if reports.first == nil
+
+    if is_administrator?
+        return reports.to_json
+    else
+        # return reports owned by user
+        data = []
+        i = 0
+        reports.each do |r|
+            report = get_report(r.id)
+            if report
+                data[i] = report
+                i = i + 1
+            end
+        end
+        return data.to_json
+    end
+
+    return data
+end
+
+# returns finding based on report id, requires Session Key
+post '/v1/findings' do
+    return "Please provide the API session" unless params[:session]
+    return "Session is not valid" unless Sessions.is_valid?(params[:session])
+    return "Please provide a report_id" unless params[:report_id]
+
+    # use implicit session methods
+    session[:session_id] = params[:session]
+
+    report = get_report(params[:report_id])
+
+    if report == nil
+        return "|-| Access rejected to report or report_id does not exist"
+    end
+
+    # Query for the findings that match the report_id
+    findings = Findings.all(:report_id => params[:report_id])
+
+    return findings.to_json
+end
+
+### API --------
 
 
 # Helper Functions
@@ -2082,6 +2248,46 @@ end
 def is_administrator?
     return true if Sessions.type(session[:session_id]) == "Administrator"
 end
+
+# authentication method used by API, returns Session Key
+def auth(username,password)
+    user = User.first(:username => username)
+
+    if user and user.auth_type == "Local"
+        usern = User.authenticate(username,password)
+
+        if usern
+            # TODO : This needs an expiration, session fixation
+            @del_session = Sessions.first(:username => "#{usern}")
+            @del_session.destroy if @del_session
+            @curr_session = Sessions.create(:username => "#{usern}",:session_key => "#{session[:session_id]}")
+            @curr_session.save
+            return @curr_session.session_key
+        end
+    elsif user
+        if options.ldap
+            #try AD authentication
+            usern = username
+            if usern == "" or password == ""
+                return ""
+            end
+
+            user = "#{options.domain}\\#{username}"
+            ldap = Net::LDAP.new :host => "#{options.dc}", :port => 636, :encryption => :simple_tls, :auth => {:method => :simple, :username => user, :password => password}
+
+            if ldap.bind
+               # replace the session in the session table
+               @del_session = Sessions.first(:username => "#{usern}")
+               @del_session.destroy if @del_session
+               @curr_session = Sessions.create(:username => "#{usern}",:session_key => "#{session[:session_id]}")
+               @curr_session.save
+               return @curr_session.session_key
+            end
+        end
+    end
+    return ""
+end
+
 
 # Grab a specific report
 def get_report(id)
